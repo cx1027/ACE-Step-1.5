@@ -22,6 +22,18 @@ from typing import Any
 from loguru import logger
 
 
+def _has_r2_config() -> bool:
+    """Return True if all required Cloudflare R2 env vars are present."""
+    required_keys = [
+        "R2_ENDPOINT",
+        "R2_ACCESS_KEY",
+        "R2_SECRET_KEY",
+        "R2_BUCKET_NAME",
+        "R2_PUBLIC_URL",
+    ]
+    return all(os.environ.get(key) for key in required_keys)
+
+
 def _configure_mps_high_watermark() -> None:
     """Relax MPS high-watermark limit for local macOS runs to reduce spurious OOM."""
     # This environment variable is only respected by the PyTorch MPS backend on macOS.
@@ -115,13 +127,19 @@ def _build_job_from_args(args: argparse.Namespace) -> dict[str, Any]:
 def main() -> None:
     """Entry point for local handler execution."""
     _configure_mps_high_watermark()
-    # For local runs we default to keeping audio files on disk instead of
-    # uploading to R2. Users who want to exercise the full upload pipeline
-    # can override this in their shell or .env.
-    if os.environ.get("DISABLE_R2_UPLOAD") is None:
-        os.environ["DISABLE_R2_UPLOAD"] = "1"
-        logger.info("DISABLE_R2_UPLOAD not set; defaulting to 1 for local_run.py.")
     _load_project_env()
+
+    # For local runs without R2 configuration, default to keeping audio files on disk
+    # instead of uploading to R2. If full R2 config is present, we leave
+    # DISABLE_R2_UPLOAD unset so that uploads are enabled by default. Users can still
+    # force-disable uploads by setting DISABLE_R2_UPLOAD=1/true/yes in their shell
+    # or .env.
+    if os.environ.get("DISABLE_R2_UPLOAD") is None and not _has_r2_config():
+        os.environ["DISABLE_R2_UPLOAD"] = "1"
+        logger.info(
+            "DISABLE_R2_UPLOAD not set and R2 config not found; "
+            "defaulting to 1 for local_run.py (no R2 uploads)."
+        )
 
     args = _parse_args()
     if args.input_json:
