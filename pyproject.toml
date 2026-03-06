@@ -55,6 +55,9 @@ dependencies = [
     "modelscope",
     "tensorboard>=2.20.0",
     "typer-slim>=0.21.1",
+    "python-dotenv>=1.0.1",
+    "boto3",
+    "runpod",
 ]
 
 [[tool.uv.index]]
