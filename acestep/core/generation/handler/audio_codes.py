@@ -53,10 +53,65 @@ class AudioCodesMixin:
         if len(code_ids) == 0:
             return None
 
+        # On MPS, previous diffusion/conditioning work plus MLX allocations can push the
+        # allocator close to its high-watermark limit. Proactively clear any cached MPS
+        # blocks before allocating tensors for audio-code decoding to avoid spurious
+        # OOMs when only a tiny amount of additional memory is actually required.
+        empty_cache = getattr(self, "_empty_cache", None)
+        if callable(empty_cache):
+            try:
+                empty_cache()
+            except Exception:
+                # Cache clearing is a best-effort optimization; failures should not
+                # break decoding, and will be surfaced via the subsequent operation.
+                logger.debug("[_decode_audio_codes_to_latents] Failed to empty cache before decoding")
+
         with self._load_model_context("model"):
             quantizer = self.model.tokenizer.quantizer
             detokenizer = self.model.detokenizer
-            indices = torch.tensor(code_ids, device=self.device, dtype=torch.long)
+
+            # On macOS MPS we intentionally keep this tiny ``indices`` tensor and the
+            # associated quantizer/codebooks *and* detokenizer on CPU instead of
+            # ``self.device`` (``mps``). The MPS allocator uses a high-watermark scheme
+            # and can report OOM when attempting to allocate even a few bytes if
+            # previous kernels/MLX allocations have fragmented memory. Decoding audio
+            # codes is lightweight compared to diffusion, so moving this step to CPU
+            # avoids spurious MPS OOM without impacting overall performance. The
+            # resulting 25Hz latents remain on CPU and are later moved to the target
+            # device by the batching helpers.
+            tensor_device = self.device
+            try:
+                is_mps = str(tensor_device).startswith("mps")
+            except Exception:
+                is_mps = False
+
+            if is_mps:
+                tensor_device = "cpu"
+                # Best-effort move of quantizer parameters/codebooks to CPU so that
+                # downstream ``vector_quantize_pytorch`` operations (such as stacking
+                # codebooks) do not allocate on MPS.
+                if hasattr(quantizer, "to"):
+                    try:
+                        quantizer = quantizer.to("cpu")
+                    except Exception:
+                        logger.debug(
+                            "[_decode_audio_codes_to_latents] Failed to move quantizer to CPU; "
+                            "continuing with original device"
+                        )
+
+                # Likewise, move the detokenizer to CPU so that its internal Linear
+                # layers and embeddings operate entirely on CPU tensors, preventing
+                # device-mismatch errors when ``quantized`` is kept on CPU.
+                if hasattr(detokenizer, "to"):
+                    try:
+                        detokenizer = detokenizer.to("cpu")
+                    except Exception:
+                        logger.debug(
+                            "[_decode_audio_codes_to_latents] Failed to move detokenizer to CPU; "
+                            "continuing with original device"
+                        )
+
+            indices = torch.tensor(code_ids, device=tensor_device, dtype=torch.long)
             indices = indices.unsqueeze(0).unsqueeze(-1)
 
             quantized = quantizer.get_output_from_indices(indices)

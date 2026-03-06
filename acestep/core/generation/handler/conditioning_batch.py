@@ -57,14 +57,29 @@ class ConditioningBatchMixin:
         batch_size = len(captions)
         audio_code_hints = self._normalize_audio_code_hints(audio_code_hints, batch_size)
 
+        # For callers that do not supply explicit reference audio, use a lightweight
+        # zero placeholder that is interpreted as "silence" by downstream logic.
+        #
+        # Important for macOS MPS:
+        # - The previous implementation allocated a 30-second, 2-channel zero tensor
+        #   per batch item *on the GPU* via .to(self.device), which could trigger
+        #   MPS OOM when overall unified memory usage was already close to the cap.
+        # - infer_refer_latent() only checks for an all-zero tensor in order to
+        #   substitute self.silence_latent; it does not depend on the actual
+        #   waveform length.
+        # - We therefore keep the placeholder tiny and on CPU to avoid unnecessary
+        #   GPU allocations while preserving behavior.
         if refer_audios is None:
-            refer_audios = [[torch.zeros(2, 30 * self.sample_rate)] for _ in range(batch_size)]
-        for ii, refer_audio_list in enumerate(refer_audios):
-            if isinstance(refer_audio_list, list):
-                for idx, _ in enumerate(refer_audio_list):
-                    refer_audio_list[idx] = refer_audio_list[idx].to(self.device).to(self._get_vae_dtype())
-            elif isinstance(refer_audio_list, torch.Tensor):
-                refer_audios[ii] = refer_audios[ii].to(self.device)
+            refer_audios = [[torch.zeros(2, 1)] for _ in range(batch_size)]
+        else:
+            for ii, refer_audio_list in enumerate(refer_audios):
+                if isinstance(refer_audio_list, list):
+                    for idx, _ in enumerate(refer_audio_list):
+                        refer_audio_list[idx] = refer_audio_list[idx].to(self.device).to(
+                            self._get_vae_dtype()
+                        )
+                elif isinstance(refer_audio_list, torch.Tensor):
+                    refer_audios[ii] = refer_audios[ii].to(self.device)
 
         if vocal_languages is None:
             vocal_languages = self._create_fallback_vocal_languages(batch_size)

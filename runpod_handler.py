@@ -295,6 +295,28 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
                 "error": f"Generated audio file not found: {audio_path}",
             }
 
+        # Optionally skip R2 upload in local/dev environments.
+        if os.environ.get("DISABLE_R2_UPLOAD", "").lower() in {"1", "true", "yes"}:
+            logger.info(
+                "[generate_music_job] DISABLE_R2_UPLOAD set — skipping R2 upload and "
+                "returning local audio path."
+            )
+            _send_progress_update(
+                callback_url,
+                {
+                    "job_id": job_id,
+                    "status": "success",
+                    "progress": 100,
+                    "output_url": audio_path,
+                    "mode": mode,
+                },
+            )
+            return {
+                "output_url": audio_path,
+                "status": "success",
+                "mode": mode,
+            }
+
         # Upload to Cloudflare R2
         s3 = boto3.client(
             "s3",

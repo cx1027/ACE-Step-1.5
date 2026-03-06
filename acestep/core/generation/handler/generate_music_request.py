@@ -108,7 +108,17 @@ class GenerateMusicRequestMixin:
                 }
             refer_audios = [[processed_ref_audio] for _ in range(actual_batch_size)]
         else:
-            refer_audios = [[torch.zeros(2, 30 * self.sample_rate)] for _ in range(actual_batch_size)]
+            # When no explicit reference audio is provided, defer to the downstream
+            # ConditioningBatchMixin to construct a lightweight, CPU-resident zero
+            # placeholder.  The previous implementation allocated a full-length
+            # 30-second stereo tensor here and later moved it to the GPU in
+            # ``_prepare_batch``, which could trigger MPS out-of-memory on Macs
+            # even though the tensor is only used as a sentinel "silence" value.
+            #
+            # Returning ``None`` lets ``_prepare_batch`` create a tiny all-zero
+            # tensor instead, which still satisfies the silence check in
+            # ``infer_refer_latent`` while dramatically reducing peak memory.
+            refer_audios = None
 
         processed_src_audio = None
         if task_type == "text2music":

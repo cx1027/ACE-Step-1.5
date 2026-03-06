@@ -120,7 +120,12 @@ class ConditioningBatchMixinTests(unittest.TestCase):
         self.assertEqual(batch["target_latents"].dtype, torch.float32)
         self.assertEqual(batch["target_latents"].shape, (2, 128, 16))
         self.assertEqual(len(batch["refer_audioss"]), 2)
-        self.assertEqual(batch["refer_audioss"][0][0].shape, (2, 30 * host.sample_rate))
+        # Default reference-audio placeholder should be a 2-channel tensor with
+        # at least one time-step; its exact length is an internal detail and
+        # may be shortened to reduce GPU memory usage on constrained devices
+        # (e.g., macOS MPS unified memory).
+        self.assertEqual(batch["refer_audioss"][0][0].shape[0], 2)
+        self.assertGreaterEqual(batch["refer_audioss"][0][0].shape[1], 1)
 
     def test_prepare_batch_populates_non_cover_inputs_when_strength_below_one(self):
         """Populate optional non-cover token fields for blended cover path."""

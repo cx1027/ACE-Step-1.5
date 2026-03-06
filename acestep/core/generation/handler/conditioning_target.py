@@ -27,9 +27,13 @@ class ConditioningTargetMixin:
         with torch.inference_mode():
             target_latents_list = []
             latent_lengths = []
+            # Keep ``target_wavs`` on CPU while preparing per-item latents to avoid
+            # eagerly allocating large MPS tensors, which can cause OOM on macOS
+            # when text2music/cover flows rely on placeholder silence audio.  The
+            # final, padded batch tensor is moved to ``self.device`` later by the
+            # batching helper, so there is no need to move the entire unpadded
+            # tensor here.
             target_wavs_list = [target_wavs[i].clone() for i in range(batch_size)]
-            if target_wavs.device != self.device:
-                target_wavs = target_wavs.to(self.device)
 
             with self._load_model_context("vae"):
                 _cached_wav_ref: Optional[torch.Tensor] = None

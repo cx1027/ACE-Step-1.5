@@ -22,6 +22,31 @@ from typing import Any
 from loguru import logger
 
 
+def _configure_mps_high_watermark() -> None:
+    """Relax MPS high-watermark limit for local macOS runs to reduce spurious OOM."""
+    # This environment variable is only respected by the PyTorch MPS backend on macOS.
+    # Setting it to 0.0 disables the high-watermark guard, allowing allocations even
+    # when the previous peak usage was near the OS unified-memory limit. This is
+    # safe for local development on machines with sufficient RAM, but should not be
+    # relied on for shared production environments.
+    if os.environ.get("PYTORCH_MPS_HIGH_WATERMARK_RATIO") is not None:
+        return
+
+    try:
+        import torch
+
+        if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+            os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
+            logger.info(
+                "Detected macOS MPS; setting PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0 "
+                "for local_run.py to reduce MPS high-watermark OOMs."
+            )
+    except Exception:
+        # If torch is not available or MPS is misconfigured, we silently skip
+        # and let the default behavior apply.
+        logger.debug("Skipping MPS high-watermark configuration (torch/MPS unavailable).")
+
+
 def _load_project_env() -> None:
     """Load `.env` from the project root if python-dotenv is installed."""
     try:
@@ -89,6 +114,13 @@ def _build_job_from_args(args: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> None:
     """Entry point for local handler execution."""
+    _configure_mps_high_watermark()
+    # For local runs we default to keeping audio files on disk instead of
+    # uploading to R2. Users who want to exercise the full upload pipeline
+    # can override this in their shell or .env.
+    if os.environ.get("DISABLE_R2_UPLOAD") is None:
+        os.environ["DISABLE_R2_UPLOAD"] = "1"
+        logger.info("DISABLE_R2_UPLOAD not set; defaulting to 1 for local_run.py.")
     _load_project_env()
 
     args = _parse_args()
