@@ -12,8 +12,17 @@ from typing import Any, Dict, Tuple
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-import boto3
 import runpod
+
+try:
+    from r2_upload import verify_cloudflare_token, upload_file_to_r2, upload_file_to_r2_direct
+except ImportError:
+    # Fallback to boto3 if r2_upload module is not available
+    import boto3
+    from botocore.exceptions import ClientError
+    r2_upload_available = False
+else:
+    r2_upload_available = True
 
 from acestep.handler import AceStepHandler
 from acestep.inference import GenerationConfig, GenerationParams, generate_music
@@ -318,53 +327,183 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
             }
 
         # Upload to Cloudflare R2
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=os.environ["R2_ENDPOINT"],
-            aws_access_key_id=os.environ["R2_ACCESS_KEY"],
-            aws_secret_access_key=os.environ["R2_SECRET_KEY"],
-            region_name="auto",
-        )
-
-        object_key = f"songs/{uuid.uuid4()}.mp3"
-        bucket_name = os.environ["R2_BUCKET_NAME"]
-
-        logger.info(f"Uploading to R2: {bucket_name}/{object_key}")
-        _send_progress_update(
-            callback_url,
-            {
-                "job_id": job_id,
-                "status": "uploading",
-                "progress": 80,
-                "object_key": object_key,
-            },
-        )
-        s3.upload_file(audio_path, bucket_name, object_key)
-
-        play_url = f"{os.environ['R2_PUBLIC_URL']}/{object_key}"
-
-        # Clean up local file
         try:
-            os.remove(audio_path)
-        except Exception as e:
-            logger.warning(f"Failed to clean up local file {audio_path}: {e}")
+            object_key = f"songs/{uuid.uuid4()}.mp3"
+            bucket_name = os.environ["R2_BUCKET_NAME"]
+            public_url_prefix = os.environ.get("R2_PUBLIC_URL", "")
 
-        _send_progress_update(
-            callback_url,
-            {
-                "job_id": job_id,
-                "status": "success",
-                "progress": 100,
-                "output_url": play_url,
-                "mode": mode,
-            },
-        )
+            logger.info(f"Uploading to R2: {bucket_name}/{object_key}")
+            _send_progress_update(
+                callback_url,
+                {
+                    "job_id": job_id,
+                    "status": "uploading",
+                    "progress": 80,
+                    "object_key": object_key,
+                },
+            )
 
-        return {
-            "output_url": play_url,
-            "status": "success",
-            "mode": mode,
-        }
+            # Try REST API upload first (if available and configured)
+            account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+            api_token = os.environ.get("CLOUDFLARE_API_TOKEN")
+            use_rest_api = r2_upload_available and account_id and api_token
+
+            if use_rest_api:
+                logger.info("Using Cloudflare REST API for R2 upload")
+                # Try pre-signed URL method first
+                success, play_url = upload_file_to_r2(
+                    audio_path,
+                    bucket_name,
+                    object_key,
+                    account_id,
+                    api_token,
+                    public_url_prefix,
+                )
+
+                # If pre-signed URL method fails, try direct PUT
+                if not success:
+                    logger.info("Pre-signed URL method failed, trying direct PUT")
+                    success, play_url = upload_file_to_r2_direct(
+                        audio_path,
+                        bucket_name,
+                        object_key,
+                        account_id,
+                        api_token,
+                        public_url_prefix,
+                    )
+
+                if success and play_url:
+                    # Clean up local file
+                    try:
+                        os.remove(audio_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to clean up local file {audio_path}: {e}")
+
+                    _send_progress_update(
+                        callback_url,
+                        {
+                            "job_id": job_id,
+                            "status": "success",
+                            "progress": 100,
+                            "output_url": play_url,
+                            "mode": mode,
+                        },
+                    )
+
+                    return {
+                        "output_url": play_url,
+                        "status": "success",
+                        "mode": mode,
+                    }
+                else:
+                    logger.warning("REST API upload failed, falling back to S3-compatible API")
+
+            # Fallback to S3-compatible API (boto3) if REST API not configured or failed
+            if not use_rest_api:
+                # Check if S3-compatible credentials are available
+                s3_endpoint = os.environ.get("R2_ENDPOINT")
+                s3_access_key = os.environ.get("R2_ACCESS_KEY")
+                s3_secret_key = os.environ.get("R2_SECRET_KEY")
+
+                if s3_endpoint and s3_access_key and s3_secret_key:
+                    logger.info("Using S3-compatible API for R2 upload")
+                    import boto3
+                    from botocore.exceptions import ClientError
+
+                    s3 = boto3.client(
+                        "s3",
+                        endpoint_url=s3_endpoint,
+                        aws_access_key_id=s3_access_key,
+                        aws_secret_access_key=s3_secret_key,
+                        region_name="auto",
+                    )
+
+                    s3.upload_file(audio_path, bucket_name, object_key)
+                    play_url = f"{public_url_prefix}/{object_key}" if public_url_prefix else f"https://{bucket_name}.r2.dev/{object_key}"
+
+                    # Clean up local file
+                    try:
+                        os.remove(audio_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to clean up local file {audio_path}: {e}")
+
+                    _send_progress_update(
+                        callback_url,
+                        {
+                            "job_id": job_id,
+                            "status": "success",
+                            "progress": 100,
+                            "output_url": play_url,
+                            "mode": mode,
+                        },
+                    )
+
+                    return {
+                        "output_url": play_url,
+                        "status": "success",
+                        "mode": mode,
+                    }
+                else:
+                    # No valid R2 configuration found
+                    raise Exception(
+                        "No valid R2 configuration found. "
+                        "Either set CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN "
+                        "or R2_ENDPOINT + R2_ACCESS_KEY + R2_SECRET_KEY"
+                    )
+            else:
+                # REST API upload failed
+                raise Exception("REST API upload failed and no fallback available")
+
+        except Exception as upload_error:
+            # Check if it's an authentication/authorization error
+            error_code = None
+            error_msg = str(upload_error).lower()
+
+            # Try to extract error code from ClientError (for boto3 fallback)
+            try:
+                from botocore.exceptions import ClientError
+                import boto3
+                if isinstance(upload_error, ClientError):
+                    error_code = upload_error.response.get("Error", {}).get("Code", "")
+                elif isinstance(upload_error, boto3.exceptions.S3UploadFailedError):
+                    if hasattr(upload_error, "last_exception") and isinstance(
+                        upload_error.last_exception, ClientError
+                    ):
+                        error_code = upload_error.last_exception.response.get("Error", {}).get("Code", "")
+            except (ImportError, AttributeError):
+                pass
+
+            # Check error message for common auth error patterns
+            if any(keyword in error_msg for keyword in ["unauthorized", "invalidaccesskeyid", "signaturedoesnotmatch", "401", "403"]):
+                error_code = "Unauthorized"
+
+            if error_code in ("Unauthorized", "InvalidAccessKeyId", "SignatureDoesNotMatch") or (
+                error_code is None and any(keyword in error_msg for keyword in ["unauthorized", "invalidaccesskeyid", "401", "403"])
+            ):
+                logger.warning(
+                    f"R2 upload failed due to authentication error ({error_code or 'authentication failed'}). "
+                    f"Falling back to local file path. Set DISABLE_R2_UPLOAD=1 to skip upload attempts, "
+                    f"or configure valid R2 credentials in your .env file."
+                )
+                # Fall back to returning local path
+                _send_progress_update(
+                    callback_url,
+                    {
+                        "job_id": job_id,
+                        "status": "success",
+                        "progress": 100,
+                        "output_url": audio_path,
+                        "mode": mode,
+                    },
+                )
+                return {
+                    "output_url": audio_path,
+                    "status": "success",
+                    "mode": mode,
+                }
+            else:
+                # Re-raise other upload errors
+                raise
 
     except KeyError as e:
         error_msg = f"Missing required environment variable: {e}"

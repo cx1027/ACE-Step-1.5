@@ -23,15 +23,32 @@ from loguru import logger
 
 
 def _has_r2_config() -> bool:
-    """Return True if all required Cloudflare R2 env vars are present."""
-    required_keys = [
+    """Return True if all required Cloudflare R2 env vars are present.
+
+    Supports two authentication methods:
+    1. REST API: CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN
+    2. S3-Compatible: R2_ENDPOINT + R2_ACCESS_KEY + R2_SECRET_KEY
+    """
+    # Method 1: REST API (Bearer Token)
+    rest_api_keys = [
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_API_TOKEN",
+        "R2_BUCKET_NAME",
+        "R2_PUBLIC_URL",
+    ]
+    has_rest_api = all(os.environ.get(key) for key in rest_api_keys)
+
+    # Method 2: S3-Compatible API
+    s3_keys = [
         "R2_ENDPOINT",
         "R2_ACCESS_KEY",
         "R2_SECRET_KEY",
         "R2_BUCKET_NAME",
         "R2_PUBLIC_URL",
     ]
-    return all(os.environ.get(key) for key in required_keys)
+    has_s3_api = all(os.environ.get(key) for key in s3_keys)
+
+    return has_rest_api or has_s3_api
 
 
 def _configure_mps_high_watermark() -> None:
