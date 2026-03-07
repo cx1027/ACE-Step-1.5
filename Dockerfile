@@ -173,6 +173,10 @@ COPY runpod.env.example /app/runpod.env.example
 # Uncomment the next line to include .env file in the image:
 # COPY .env /app/.env
 
+# Copy startup script
+COPY start_runpod.sh /app/start_runpod.sh
+RUN chmod +x /app/start_runpod.sh
+
 # ==================== Runtime directories ====================
 RUN mkdir -p /app/checkpoints /tmp/acestep_output
 
@@ -198,4 +202,5 @@ HEALTHCHECK --interval=60s --timeout=10s --start-period=120s --retries=3 \
 # ==================== Entrypoint ====================
 # RunPod serverless will call the handler directly
 # The handler is configured in RunPod console: handler = runpod_handler.py
-ENTRYPOINT ["python", "runpod_handler.py"]
+# The startup script ensures models are downloaded before starting the handler
+ENTRYPOINT ["/app/start_runpod.sh"]
