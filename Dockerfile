@@ -63,7 +63,8 @@ RUN pip install --no-cache-dir \
 RUN pip install --no-cache-dir \
         runpod \
         boto3 \
-        python-dotenv
+        python-dotenv \
+        httpx
 
 # Install core ACE-Step dependencies
 RUN pip install --no-cache-dir \

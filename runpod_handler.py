@@ -2,17 +2,26 @@
 
 This handler processes RunPod serverless jobs to generate music using ACE-Step
 and uploads the results to Cloudflare R2 storage.
+
+Supports async concurrent processing for RunPod Serverless with min_worker=0.
 """
 
+import asyncio
 import json
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, Tuple
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 
 import runpod
+
+# Try to use httpx for async HTTP, fallback to asyncio.to_thread if not available
+try:
+    import httpx
+    HTTPX_AVAILABLE = True
+except ImportError:
+    HTTPX_AVAILABLE = False
 
 try:
     from r2_upload import verify_cloudflare_token, upload_file_to_r2, upload_file_to_r2_direct
@@ -116,7 +125,7 @@ def _initialize_handlers() -> Tuple[AceStepHandler, LLMHandler]:
     return dit_handler, llm_handler
 
 
-def _send_progress_update(
+async def _send_progress_update(
     callback_url: str | None,
     payload: Dict[str, Any],
 ) -> None:
@@ -125,23 +134,36 @@ def _send_progress_update(
     This is intended to be used by an external FastAPI (or any HTTP) service
     that wants to track RunPod job progress. The client should pass a
     ``callback_url`` field in the RunPod job ``input`` payload.
+
+    Args:
+        callback_url: URL to send progress update to, or None to skip.
+        payload: Dictionary containing progress update data.
     """
     if not callback_url:
         return
 
     try:
-        data = json.dumps(payload).encode("utf-8")
-        request = Request(
-            callback_url,
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        urlopen(request, timeout=5)
-    except URLError as e:
+        if HTTPX_AVAILABLE:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(callback_url, json=payload)
+        else:
+            # Fallback to asyncio.to_thread for synchronous urlopen
+            from urllib.error import URLError
+            from urllib.request import Request, urlopen
+
+            def _sync_send():
+                data = json.dumps(payload).encode("utf-8")
+                request = Request(
+                    callback_url,
+                    data=data,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                urlopen(request, timeout=5)
+
+            await asyncio.to_thread(_sync_send)
+    except Exception as e:
         logger.warning(f"Failed to send progress update to {callback_url}: {e}")
-    except Exception as e:  # pragma: no cover - defensive logging only
-        logger.warning(f"Unexpected error when sending progress update: {e}")
 
 
 # Initialize handlers at module load time
@@ -154,8 +176,30 @@ except Exception as e:
     _DIT_HANDLER = None
     _LLM_HANDLER = None
 
+# Thread pool executor for running blocking operations
+_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="acestep-worker")
 
-def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
+
+def adjust_concurrency(current_concurrency: int) -> int:
+    """Adjust worker concurrency level based on current load.
+
+    This function is called by RunPod to determine how many concurrent
+    requests a single worker can handle. Higher values allow more parallel
+    processing within a single worker instance.
+
+    Args:
+        current_concurrency: Current concurrency level set by RunPod.
+
+    Returns:
+        Desired concurrency level. Default: 2 (allows 2 concurrent requests per worker).
+    """
+    # Allow 2 concurrent requests per worker by default
+    # This can be adjusted via environment variable
+    max_concurrency = int(os.environ.get("RUNPOD_MAX_CONCURRENCY", "2"))
+    return max(1, min(max_concurrency, 10))  # Clamp between 1 and 10
+
+
+async def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
     """Process a RunPod serverless job to generate music.
 
     Args:
@@ -246,7 +290,7 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(
             f"Generating music (mode={mode}): prompt='{prompt}', duration={duration}s",
         )
-        _send_progress_update(
+        await _send_progress_update(
             callback_url,
             {
                 "job_id": job_id,
@@ -255,17 +299,23 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
                 "mode": mode,
             },
         )
-        result = generate_music(
-            dit_handler=_DIT_HANDLER,
-            llm_handler=_LLM_HANDLER,
-            params=params,
-            config=config,
-            save_dir=output_dir,
-        )
+
+        # Run blocking generate_music in executor
+        def _blocking_generate():
+            return generate_music(
+                dit_handler=_DIT_HANDLER,
+                llm_handler=_LLM_HANDLER,
+                params=params,
+                config=config,
+                save_dir=output_dir,
+            )
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(_EXECUTOR, _blocking_generate)
 
         if not result.success:
             error_msg = result.error or "Music generation failed"
-            _send_progress_update(
+            await _send_progress_update(
                 callback_url,
                 {
                     "job_id": job_id,
@@ -281,7 +331,7 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
 
         if not result.audios:
             error_msg = "No audio files generated"
-            _send_progress_update(
+            await _send_progress_update(
                 callback_url,
                 {
                     "job_id": job_id,
@@ -310,7 +360,7 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
                 "[generate_music_job] DISABLE_R2_UPLOAD set — skipping R2 upload and "
                 "returning local audio path."
             )
-            _send_progress_update(
+            await _send_progress_update(
                 callback_url,
                 {
                     "job_id": job_id,
@@ -333,7 +383,7 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
             public_url_prefix = os.environ.get("R2_PUBLIC_URL", "")
 
             logger.info(f"Uploading to R2: {bucket_name}/{object_key}")
-            _send_progress_update(
+            await _send_progress_update(
                 callback_url,
                 {
                     "job_id": job_id,
@@ -350,20 +400,9 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
 
             if use_rest_api:
                 logger.info("Using Cloudflare REST API for R2 upload")
-                # Try pre-signed URL method first
-                success, play_url = upload_file_to_r2(
-                    audio_path,
-                    bucket_name,
-                    object_key,
-                    account_id,
-                    api_token,
-                    public_url_prefix,
-                )
-
-                # If pre-signed URL method fails, try direct PUT
-                if not success:
-                    logger.info("Pre-signed URL method failed, trying direct PUT")
-                    success, play_url = upload_file_to_r2_direct(
+                # Run blocking upload operations in executor
+                def _blocking_upload_r2():
+                    return upload_file_to_r2(
                         audio_path,
                         bucket_name,
                         object_key,
@@ -372,6 +411,25 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
                         public_url_prefix,
                     )
 
+                def _blocking_upload_r2_direct():
+                    return upload_file_to_r2_direct(
+                        audio_path,
+                        bucket_name,
+                        object_key,
+                        account_id,
+                        api_token,
+                        public_url_prefix,
+                    )
+
+                loop = asyncio.get_running_loop()
+                # Try pre-signed URL method first
+                success, play_url = await loop.run_in_executor(_EXECUTOR, _blocking_upload_r2)
+
+                # If pre-signed URL method fails, try direct PUT
+                if not success:
+                    logger.info("Pre-signed URL method failed, trying direct PUT")
+                    success, play_url = await loop.run_in_executor(_EXECUTOR, _blocking_upload_r2_direct)
+
                 if success and play_url:
                     # Clean up local file
                     try:
@@ -379,7 +437,7 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
                     except Exception as e:
                         logger.warning(f"Failed to clean up local file {audio_path}: {e}")
 
-                    _send_progress_update(
+                    await _send_progress_update(
                         callback_url,
                         {
                             "job_id": job_id,
@@ -407,19 +465,23 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
 
                 if s3_endpoint and s3_access_key and s3_secret_key:
                     logger.info("Using S3-compatible API for R2 upload")
-                    import boto3
-                    from botocore.exceptions import ClientError
 
-                    s3 = boto3.client(
-                        "s3",
-                        endpoint_url=s3_endpoint,
-                        aws_access_key_id=s3_access_key,
-                        aws_secret_access_key=s3_secret_key,
-                        region_name="auto",
-                    )
+                    def _blocking_upload_s3():
+                        import boto3
+                        from botocore.exceptions import ClientError
 
-                    s3.upload_file(audio_path, bucket_name, object_key)
-                    play_url = f"{public_url_prefix}/{object_key}" if public_url_prefix else f"https://{bucket_name}.r2.dev/{object_key}"
+                        s3 = boto3.client(
+                            "s3",
+                            endpoint_url=s3_endpoint,
+                            aws_access_key_id=s3_access_key,
+                            aws_secret_access_key=s3_secret_key,
+                            region_name="auto",
+                        )
+                        s3.upload_file(audio_path, bucket_name, object_key)
+                        return f"{public_url_prefix}/{object_key}" if public_url_prefix else f"https://{bucket_name}.r2.dev/{object_key}"
+
+                    loop = asyncio.get_running_loop()
+                    play_url = await loop.run_in_executor(_EXECUTOR, _blocking_upload_s3)
 
                     # Clean up local file
                     try:
@@ -427,7 +489,7 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
                     except Exception as e:
                         logger.warning(f"Failed to clean up local file {audio_path}: {e}")
 
-                    _send_progress_update(
+                    await _send_progress_update(
                         callback_url,
                         {
                             "job_id": job_id,
@@ -486,7 +548,7 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
                     f"or configure valid R2 credentials in your .env file."
                 )
                 # Fall back to returning local path
-                _send_progress_update(
+                await _send_progress_update(
                     callback_url,
                     {
                         "job_id": job_id,
@@ -507,7 +569,7 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
 
     except KeyError as e:
         error_msg = f"Missing required environment variable: {e}"
-        _send_progress_update(
+        await _send_progress_update(
             job.get("input", {}).get("callback_url"),
             {
                 "job_id": job.get("id") or job.get("job_id"),
@@ -522,7 +584,7 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
         }
     except Exception as e:
         logger.exception("Error in generate_music_job")
-        _send_progress_update(
+        await _send_progress_update(
             job.get("input", {}).get("callback_url"),
             {
                 "job_id": job.get("id") or job.get("job_id"),
@@ -539,4 +601,9 @@ def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
 
 # Start RunPod serverless handler
 if __name__ == "__main__":
-    runpod.serverless.start({"handler": generate_music_job})
+    runpod.serverless.start(
+        {
+            "handler": generate_music_job,
+            "concurrency_modifier": adjust_concurrency,
+        }
+    )
