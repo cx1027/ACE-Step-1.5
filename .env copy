@@ -1,0 +1,45 @@
+# ACE-Step RunPod Serverless Configuration
+# Copy this file to .env and fill in your actual values
+# DO NOT commit .env to version control (it contains sensitive information)
+
+# =============================================================================
+# Required: Cloudflare R2 Storage Configuration
+# =============================================================================
+# Choose ONE of the following authentication methods:
+
+# Method 1: Cloudflare REST API (Recommended - uses Bearer Token)
+# Get your API token from: https://dash.cloudflare.com/profile/api-tokens
+# Required permissions: Account > Cloudflare R2 > Edit
+CLOUDFLARE_ACCOUNT_ID=13d2f431296ab430eb63df236a1374e2
+CLOUDFLARE_API_TOKEN=BEsxRu7zHmx-aO4RcMLAnXtlBmegId7MzfH9ElK6
+R2_BUCKET_NAME=music-outputs
+R2_PUBLIC_URL=https://pub-41f5517642ad492cbae588b5671e80cb.r2.dev
+
+# Method 2: S3-Compatible API (Fallback - uses Access Key + Secret Key)
+# Uncomment and fill these if you prefer S3-compatible authentication
+# R2_ENDPOINT=https://13d2f431296ab430eb63df236a1374e2.r2.cloudflarestorage.com
+# R2_ACCESS_KEY=your-r2-access-key-id
+# R2_SECRET_KEY=your-r2-secret-access-key
+
+# =============================================================================
+# Optional: ACE-Step Model Configuration
+# =============================================================================
+# Project root directory (default: current working directory)
+# ACESTEP_PROJECT_ROOT=/path/to/project
+
+# DiT model configuration
+ACESTEP_CONFIG_PATH=acestep-v15-turbo
+ACESTEP_DEVICE=auto
+
+# Model optimization options
+ACESTEP_USE_FLASH_ATTENTION=true
+ACESTEP_COMPILE_MODEL=false
+ACESTEP_OFFLOAD_TO_CPU=false
+ACESTEP_OFFLOAD_DIT_TO_CPU=false
+
+# LLM model configuration (optional, for CoT reasoning)
+ACESTEP_LM_MODEL_PATH=acestep-5Hz-lm-1.7B
+ACESTEP_LM_BACKEND=vllm
+ACESTEP_LM_OFFLOAD_TO_CPU=false
+
+DISABLE_R2_UPLOAD = false

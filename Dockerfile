@@ -107,15 +107,47 @@ WORKDIR /app
 # Copy project files
 COPY . /app/
 
-# Install ACE-Step package in editable mode
-# This ensures acestep module can be imported by runpod_handler.py
-RUN pip install --no-cache-dir -e .
-
-# Install nano-vllm from local source (if available)
+# Install nano-vllm from local source first (before installing project)
+# This is needed because pip cannot resolve tool.uv.sources in pyproject.toml
 RUN if [ -d "acestep/third_parts/nano-vllm" ]; then \
         pip install --no-cache-dir --no-deps acestep/third_parts/nano-vllm || \
         echo "WARNING: nano-vllm install failed (non-fatal)"; \
     fi
+
+# Install ACE-Step package in editable mode
+# This ensures acestep module can be imported by runpod_handler.py
+# We install with --no-deps first, then install dependencies manually
+# This avoids the nano-vllm dependency resolution issue
+RUN pip install --no-cache-dir --no-deps -e . && \
+    pip install --no-cache-dir \
+        "transformers>=4.51.0,<4.58.0" \
+        "diffusers" \
+        "gradio==6.2.0" \
+        "matplotlib>=3.7.5" \
+        "scipy>=1.10.1" \
+        "soundfile>=0.13.1" \
+        "loguru>=0.7.3" \
+        "einops>=0.8.1" \
+        "accelerate>=1.12.0" \
+        "fastapi>=0.110.0" \
+        "diskcache" \
+        "uvicorn[standard]>=0.27.0" \
+        "numba>=0.63.1" \
+        "vector-quantize-pytorch>=1.27.15" \
+        "torchao>=0.14.1,<0.16.0" \
+        "toml" \
+        "safetensors==0.7.0" \
+        "modelscope" \
+        "peft>=0.18.0" \
+        "lycoris-lora" \
+        "lightning>=2.0.0" \
+        "tensorboard>=2.20.0" \
+        "typer-slim>=0.21.1" \
+        "xxhash" \
+        "pyyaml" \
+        "python-dotenv>=1.0.1" \
+        "boto3" \
+        "runpod"
 
 # ==================== .env file support ====================
 # To include .env file in the image (for development/testing):

@@ -75,11 +75,246 @@ Ensure your deployment package includes:
 
 ### 2. Create RunPod Serverless Endpoint
 
-1. Go to RunPod dashboard → **Serverless** → **Create Endpoint**
-2. Configure:
-   - **Container Image**: Use a base image with Python 3.11-3.12
-   - **Handler Path**: `runpod_handler.py`
-   - **Environment Variables**: Add all required variables (Method 1)
+#### Step 2.1: Access RunPod Dashboard
+
+1. 登录 [RunPod Dashboard](https://www.runpod.io/console/serverless)
+2. 在左侧导航栏，点击 **Serverless**
+3. 点击右上角的 **Create Endpoint** 按钮
+
+#### Step 2.2: Configure Basic Settings
+
+在创建页面的 **Basic Settings** 部分：
+
+1. **Endpoint Name** (必填)
+   - 输入一个描述性的名称，例如：`acestep-music-generator`
+   - 这个名称会用于识别你的 endpoint
+
+2. **Container Image** (必填)
+   - 输入你推送到 Docker Hub 的镜像地址：
+     ```
+     your-username/acestep-runpod:latest
+     ```
+   - 替换 `your-username` 为你的 Docker Hub 用户名
+   - 例如：`john/acestep-runpod:latest`
+
+3. **Handler Path** (必填)
+   - 输入：`runpod_handler.py`
+   - 这是 RunPod 会调用的主处理函数文件
+
+#### Step 2.3: Configure GPU Settings
+
+在 **GPU Settings** 部分：
+
+1. **GPU Type** (必填)
+   - 推荐选择：**RTX 3090**、**RTX 4090**、**A100** 或 **A6000**
+   - 根据你的模型选择：
+     - `acestep-5Hz-lm-0.6B`: 至少 16GB VRAM (RTX 3090/4090)
+     - `acestep-5Hz-lm-1.7B`: 推荐 24GB VRAM (RTX 4090/A6000)
+     - `acestep-5Hz-lm-4B`: 需要 20GB+ VRAM (A100/A6000)
+
+2. **Min Workers** (可选)
+   - 推荐设置为 `0`（按需启动，节省成本）
+   - 如果希望保持常驻，设置为 `1` 或更高
+
+3. **Max Workers** (可选)
+   - 根据你的并发需求设置，例如：`5`
+
+4. **Idle Timeout** (可选)
+   - 推荐：`5` 秒（worker 空闲多久后关闭）
+   - 可以设置为 `10-30` 秒以平衡响应速度和成本
+
+#### Step 2.4: Configure Environment Variables
+
+在 **Environment Variables** 部分，点击 **Add Environment Variable** 添加以下变量：
+
+**必需的 R2 配置变量**（二选一，推荐方式 1）：
+
+**方式 1: Cloudflare REST API（推荐）**
+
+这种方式使用 Cloudflare API Token，更安全且易于管理。
+
+| 变量名 | 值示例 | 说明 | 如何获取 |
+|--------|--------|------|----------|
+| `CLOUDFLARE_ACCOUNT_ID` | `13d2f431296ab430eb63df236a1374e2` | Cloudflare 账户 ID | 在 Cloudflare Dashboard 右上角可以看到 |
+| `CLOUDFLARE_API_TOKEN` | `BEsxRu7zHmx-aO4RcMLAnXtlBmegId7MzfH9ElK6` | Cloudflare API Token | [创建 API Token](https://dash.cloudflare.com/profile/api-tokens)，权限：Account > Cloudflare R2 > Edit |
+| `R2_BUCKET_NAME` | `music-outputs` | R2 bucket 名称 | 在 R2 Dashboard 中创建或查看 |
+| `R2_PUBLIC_URL` | `https://pub-41f5517642ad492cbae588b5671e80cb.r2.dev` | 公共访问 URL 前缀 | 在 R2 bucket 设置中配置自定义域名或使用默认 R2.dev 域名 |
+
+**方式 2: S3-Compatible API（备选）**
+
+如果方式 1 不可用，可以使用 S3 兼容的 API。
+
+| 变量名 | 值示例 | 说明 | 如何获取 |
+|--------|--------|------|----------|
+| `R2_ENDPOINT` | `https://13d2f431296ab430eb63df236a1374e2.r2.cloudflarestorage.com` | R2 endpoint URL | 格式：`https://{账户ID}.r2.cloudflarestorage.com` |
+| `R2_ACCESS_KEY` | `your-r2-access-key-id` | R2 访问密钥 ID | [R2 API Tokens](https://dash.cloudflare.com/) → R2 → Manage R2 API Tokens |
+| `R2_SECRET_KEY` | `your-r2-secret-access-key` | R2 秘密访问密钥 | 同上，创建 token 时获取 |
+| `R2_BUCKET_NAME` | `music-outputs` | R2 bucket 名称 | 在 R2 Dashboard 中创建或查看 |
+| `R2_PUBLIC_URL` | `https://pub-41f5517642ad492cbae588b5671e80cb.r2.dev` | 公共访问 URL 前缀 | 在 R2 bucket 设置中配置自定义域名或使用默认 R2.dev 域名 |
+
+**注意**：
+- 两种方式只需要选择一种即可，不需要同时配置
+- 推荐使用**方式 1**（Cloudflare REST API），因为它更简单且安全
+- 如果两种方式都配置了，代码会优先使用方式 1
+
+**可选的 ACE-Step 配置变量**（根据需要添加）：
+
+| 变量名 | 默认值 | 说明 |
+|--------|--------|------|
+| `ACESTEP_CONFIG_PATH` | `acestep-v15-turbo` | DiT 模型名称 |
+| `ACESTEP_DEVICE` | `auto` | 设备选择 (auto/cuda/cpu) |
+| `ACESTEP_USE_FLASH_ATTENTION` | `true` | 启用 flash attention |
+| `ACESTEP_COMPILE_MODEL` | `false` | 编译模型以提升速度 |
+| `ACESTEP_OFFLOAD_TO_CPU` | `false` | 卸载到 CPU |
+| `ACESTEP_OFFLOAD_DIT_TO_CPU` | `false` | 卸载 DiT 到 CPU |
+| `ACESTEP_LM_MODEL_PATH` | `acestep-5Hz-lm-0.6B` | LLM 模型路径 |
+| `ACESTEP_LM_BACKEND` | `vllm` | LLM 后端 (vllm/pt) |
+| `ACESTEP_LM_OFFLOAD_TO_CPU` | `false` | 卸载 LLM 到 CPU |
+
+**详细填写步骤（以方式 1 为例）**：
+
+1. **添加 CLOUDFLARE_ACCOUNT_ID**
+   - 点击 **"Add Environment Variable"** 按钮
+   - **Key**: `CLOUDFLARE_ACCOUNT_ID`
+   - **Value**: 你的 Cloudflare 账户 ID（例如：`13d2f431296ab430eb63df236a1374e2`）
+   - 点击 **"Add"** 或 **"Save"** 保存
+
+2. **添加 CLOUDFLARE_API_TOKEN**
+   - 再次点击 **"Add Environment Variable"**
+   - **Key**: `CLOUDFLARE_API_TOKEN`
+   - **Value**: 你的 API Token（例如：`BEsxRu7zHmx-aO4RcMLAnXtlBmegId7MzfH9ElK6`）
+   - 点击 **"Add"** 保存
+
+3. **添加 R2_BUCKET_NAME**
+   - **Key**: `R2_BUCKET_NAME`
+   - **Value**: 你的 bucket 名称（例如：`music-outputs`）
+   - 点击 **"Add"** 保存
+
+4. **添加 R2_PUBLIC_URL**
+   - **Key**: `R2_PUBLIC_URL`
+   - **Value**: 你的公共访问 URL（例如：`https://pub-41f5517642ad492cbae588b5671e80cb.r2.dev`）
+   - 点击 **"Add"** 保存
+
+**完整示例（方式 1 - 推荐）**：
+```
+CLOUDFLARE_ACCOUNT_ID = 13d2f431296ab430eb63df236a1374e2
+CLOUDFLARE_API_TOKEN = BEsxRu7zHmx-aO4RcMLAnXtlBmegId7MzfH9ElK6
+R2_BUCKET_NAME = music-outputs
+R2_PUBLIC_URL = https://pub-41f5517642ad492cbae588b5671e80cb.r2.dev
+```
+
+**完整示例（方式 2 - 备选）**：
+```
+R2_ENDPOINT = https://13d2f431296ab430eb63df236a1374e2.r2.cloudflarestorage.com
+R2_ACCESS_KEY = your-r2-access-key-id
+R2_SECRET_KEY = your-r2-secret-access-key
+R2_BUCKET_NAME = music-outputs
+R2_PUBLIC_URL = https://pub-41f5517642ad492cbae588b5671e80cb.r2.dev
+```
+
+**重要提示**：
+- 所有变量名都是**大小写敏感**的，请确保完全匹配
+- 不要包含引号（`"` 或 `'`），直接填写值
+- 如果值中包含空格，不需要特殊处理，直接填写即可
+- 保存后，RunPod 会自动应用这些环境变量到容器中
+
+#### Step 2.5: Configure Advanced Settings (可选)
+
+在 **Advanced Settings** 部分：
+
+1. **Container Disk** (可选)
+   - 默认值通常足够（20GB）
+   - 如果需要下载大型模型，可以增加到 `50GB` 或 `100GB`
+
+2. **Container Registry Credentials** (可选)
+   - 如果你的 Docker 镜像是私有的，需要添加 Docker Hub 凭据
+   - 对于公共镜像，可以跳过
+
+3. **Network Volume** (可选)
+   - 如果需要持久化存储模型文件，可以配置网络卷
+   - 通常不需要，因为模型会从 Hugging Face 或 ModelScope 下载
+
+4. **Timeout** (可选)
+   - 推荐设置为 `600` 秒（10 分钟）或更长
+   - 音乐生成可能需要较长时间
+
+#### Step 2.6: Review and Create
+
+1. 检查所有配置是否正确
+2. 确认环境变量都已添加
+3. 点击 **Create Endpoint** 按钮
+
+#### Step 2.7: Wait for Deployment
+
+1. RunPod 会开始部署你的 endpoint
+2. 首次部署可能需要几分钟来：
+   - 拉取 Docker 镜像
+   - 启动容器
+   - 下载模型文件（如果未缓存）
+3. 在 **Serverless** 页面可以看到部署状态：
+   - **Deploying**: 正在部署
+   - **Ready**: 准备就绪
+   - **Error**: 部署失败（查看日志）
+
+#### Step 2.8: Verify Deployment
+
+1. 点击你的 endpoint 名称进入详情页
+2. 查看 **Logs** 标签页，确认没有错误
+3. 应该看到类似日志：
+   ```
+   Loaded environment variables from /app/.env (if using .env)
+   Initializing ACE-Step handler...
+   Handler ready
+   ```
+
+#### Step 2.9: Test the Endpoint
+
+1. 在 endpoint 详情页，找到 **Test** 或 **Send Test Request** 按钮
+2. 使用以下测试输入：
+
+```json
+{
+  "input": {
+    "prompt": "generate a song for rain within 30 secs",
+    "duration": 30
+  }
+}
+```
+
+3. 点击 **Send** 发送测试请求
+4. 查看响应，应该返回：
+```json
+{
+  "output_url": "https://your-public-domain.com/songs/uuid.mp3",
+  "status": "success",
+  "mode": null
+}
+```
+
+#### 常见问题排查
+
+**问题 1: 镜像拉取失败**
+- 检查镜像名称是否正确
+- 确认镜像已成功推送到 Docker Hub
+- 检查 Docker Hub 镜像是否为公开（或已配置凭据）
+
+**问题 2: Handler 找不到**
+- 确认 Handler Path 设置为 `runpod_handler.py`
+- 检查 Dockerfile 中是否正确复制了文件
+
+**问题 3: 环境变量缺失错误**
+- 确认所有必需的 R2 变量都已添加
+- 检查变量名拼写是否正确（区分大小写）
+
+**问题 4: GPU 内存不足**
+- 尝试使用更小的 LLM 模型（`acestep-5Hz-lm-0.6B`）
+- 启用 CPU offload 选项
+- 升级到更大的 GPU
+
+**问题 5: 模型下载超时**
+- 增加 Timeout 设置
+- 检查网络连接
+- 考虑使用网络卷预下载模型
 
 ### 3. Install Dependencies
 
