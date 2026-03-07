@@ -135,10 +135,10 @@ Ensure your deployment package includes:
 
 | 变量名 | 值示例 | 说明 | 如何获取 |
 |--------|--------|------|----------|
-| `CLOUDFLARE_ACCOUNT_ID` | `13d2f431296ab430eb63df236a1374e2` | Cloudflare 账户 ID | 在 Cloudflare Dashboard 右上角可以看到 |
-| `CLOUDFLARE_API_TOKEN` | `BEsxRu7zHmx-aO4RcMLAnXtlBmegId7MzfH9ElK6` | Cloudflare API Token | [创建 API Token](https://dash.cloudflare.com/profile/api-tokens)，权限：Account > Cloudflare R2 > Edit |
+| `CLOUDFLARE_ACCOUNT_ID` | `your-cloudflare-account-id` | Cloudflare 账户 ID | 在 Cloudflare Dashboard 右上角可以看到 |
+| `CLOUDFLARE_API_TOKEN` | `your-cloudflare-api-token-bearer-token` | Cloudflare API Token | [创建 API Token](https://dash.cloudflare.com/profile/api-tokens)，权限：Account > Cloudflare R2 > Edit |
 | `R2_BUCKET_NAME` | `music-outputs` | R2 bucket 名称 | 在 R2 Dashboard 中创建或查看 |
-| `R2_PUBLIC_URL` | `https://pub-41f5517642ad492cbae588b5671e80cb.r2.dev` | 公共访问 URL 前缀 | 在 R2 bucket 设置中配置自定义域名或使用默认 R2.dev 域名 |
+| `R2_PUBLIC_URL` | `https://your-public-domain.com` | 公共访问 URL 前缀 | 在 R2 bucket 设置中配置自定义域名或使用默认 R2.dev 域名 |
 
 **方式 2: S3-Compatible API（备选）**
 
@@ -146,11 +146,11 @@ Ensure your deployment package includes:
 
 | 变量名 | 值示例 | 说明 | 如何获取 |
 |--------|--------|------|----------|
-| `R2_ENDPOINT` | `https://13d2f431296ab430eb63df236a1374e2.r2.cloudflarestorage.com` | R2 endpoint URL | 格式：`https://{账户ID}.r2.cloudflarestorage.com` |
+| `R2_ENDPOINT` | `https://your-account-id.r2.cloudflarestorage.com` | R2 endpoint URL | 格式：`https://{账户ID}.r2.cloudflarestorage.com` |
 | `R2_ACCESS_KEY` | `your-r2-access-key-id` | R2 访问密钥 ID | [R2 API Tokens](https://dash.cloudflare.com/) → R2 → Manage R2 API Tokens |
 | `R2_SECRET_KEY` | `your-r2-secret-access-key` | R2 秘密访问密钥 | 同上，创建 token 时获取 |
 | `R2_BUCKET_NAME` | `music-outputs` | R2 bucket 名称 | 在 R2 Dashboard 中创建或查看 |
-| `R2_PUBLIC_URL` | `https://pub-41f5517642ad492cbae588b5671e80cb.r2.dev` | 公共访问 URL 前缀 | 在 R2 bucket 设置中配置自定义域名或使用默认 R2.dev 域名 |
+| `R2_PUBLIC_URL` | `https://your-public-domain.com` | 公共访问 URL 前缀 | 在 R2 bucket 设置中配置自定义域名或使用默认 R2.dev 域名 |
 
 **注意**：
 - 两种方式只需要选择一种即可，不需要同时配置
@@ -176,13 +176,13 @@ Ensure your deployment package includes:
 1. **添加 CLOUDFLARE_ACCOUNT_ID**
    - 点击 **"Add Environment Variable"** 按钮
    - **Key**: `CLOUDFLARE_ACCOUNT_ID`
-   - **Value**: 你的 Cloudflare 账户 ID（例如：`13d2f431296ab430eb63df236a1374e2`）
+   - **Value**: 你的 Cloudflare 账户 ID（例如：`your-cloudflare-account-id`）
    - 点击 **"Add"** 或 **"Save"** 保存
 
 2. **添加 CLOUDFLARE_API_TOKEN**
    - 再次点击 **"Add Environment Variable"**
    - **Key**: `CLOUDFLARE_API_TOKEN`
-   - **Value**: 你的 API Token（例如：`BEsxRu7zHmx-aO4RcMLAnXtlBmegId7MzfH9ElK6`）
+   - **Value**: 你的 API Token（例如：`your-cloudflare-api-token-bearer-token`）
    - 点击 **"Add"** 保存
 
 3. **添加 R2_BUCKET_NAME**
@@ -192,24 +192,24 @@ Ensure your deployment package includes:
 
 4. **添加 R2_PUBLIC_URL**
    - **Key**: `R2_PUBLIC_URL`
-   - **Value**: 你的公共访问 URL（例如：`https://pub-41f5517642ad492cbae588b5671e80cb.r2.dev`）
+   - **Value**: 你的公共访问 URL（例如：`https://your-public-domain.com`）
    - 点击 **"Add"** 保存
 
 **完整示例（方式 1 - 推荐）**：
 ```
-CLOUDFLARE_ACCOUNT_ID = 13d2f431296ab430eb63df236a1374e2
-CLOUDFLARE_API_TOKEN = BEsxRu7zHmx-aO4RcMLAnXtlBmegId7MzfH9ElK6
-R2_BUCKET_NAME = music-outputs
-R2_PUBLIC_URL = https://pub-41f5517642ad492cbae588b5671e80cb.r2.dev
+CLOUDFLARE_ACCOUNT_ID = your-cloudflare-account-id
+CLOUDFLARE_API_TOKEN = your-cloudflare-api-token-bearer-token
+R2_BUCKET_NAME = your-bucket-name
+R2_PUBLIC_URL = https://your-public-domain.com
 ```
 
 **完整示例（方式 2 - 备选）**：
 ```
-R2_ENDPOINT = https://13d2f431296ab430eb63df236a1374e2.r2.cloudflarestorage.com
+R2_ENDPOINT = https://your-account-id.r2.cloudflarestorage.com
 R2_ACCESS_KEY = your-r2-access-key-id
 R2_SECRET_KEY = your-r2-secret-access-key
 R2_BUCKET_NAME = music-outputs
-R2_PUBLIC_URL = https://pub-41f5517642ad492cbae588b5671e80cb.r2.dev
+R2_PUBLIC_URL = https://your-public-domain.com
 ```
 
 **重要提示**：

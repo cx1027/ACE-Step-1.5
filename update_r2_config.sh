@@ -4,7 +4,7 @@
 
 set -e
 
-ACCOUNT_ID="13d2f431296ab430eb63df236a1374e2"
+ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-your-cloudflare-account-id}"
 
 echo "=========================================="
 echo "R2 Configuration Updater"

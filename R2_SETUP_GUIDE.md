@@ -8,11 +8,11 @@
 
 ### 1. Cloudflare API Token（你当前拥有的）
 - **用途**: 访问 Cloudflare API（如验证 token、管理账户等）
-- **格式**: Bearer token（如 `BEsxRu7zHmx-aO4RcMLAnXtlBmegId7MzfH9ElK6`）
+- **格式**: Bearer token（如 `your-cloudflare-api-token-bearer-token`）
 - **你的 curl 命令**: ✅ 工作正常
   ```bash
-  curl "https://api.cloudflare.com/client/v4/accounts/13d2f431296ab430eb63df236a1374e2/tokens/verify" \
-    -H "Authorization: Bearer BEsxRu7zHmx-aO4RcMLAnXtlBmegId7MzfH9ElK6"
+  curl "https://api.cloudflare.com/client/v4/accounts/your-account-id/tokens/verify" \
+    -H "Authorization: Bearer your-cloudflare-api-token-bearer-token"
   ```
 
 ### 2. R2 API Token（你需要的）
@@ -51,7 +51,7 @@
 
 5. **复制凭证**
    - 创建后，你会看到：
-     - **Access Key ID**: 类似 `13d2f431296ab430eb63df236a1374e2`
+     - **Access Key ID**: 类似 `your-r2-access-key-id`
      - **Secret Access Key**: 类似 `abc123def456...`（**重要：只显示一次！**）
    - ⚠️ **立即复制 Secret Access Key**，关闭页面后无法再次查看
 
@@ -77,7 +77,7 @@ bash update_r2_config.sh
 
 ```bash
 # R2 Configuration
-R2_ENDPOINT=https://13d2f431296ab430eb63df236a1374e2.r2.cloudflarestorage.com
+R2_ENDPOINT=https://your-account-id.r2.cloudflarestorage.com
 R2_ACCESS_KEY=<你的-R2-Access-Key-ID>
 R2_SECRET_KEY=<你的-R2-Secret-Access-Key>
 R2_BUCKET_NAME=music-outputs

@@ -18,10 +18,10 @@ cp ".env copy" .env
 
 ```env
 # Cloudflare REST API 配置（使用 Bearer Token）
-CLOUDFLARE_ACCOUNT_ID=13d2f431296ab430eb63df236a1374e2
-CLOUDFLARE_API_TOKEN=BEsxRu7zHmx-aO4RcMLAnXtlBmegId7MzfH9ElK6
+CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
+CLOUDFLARE_API_TOKEN=your-cloudflare-api-token-bearer-token
 R2_BUCKET_NAME=music-outputs
-R2_PUBLIC_URL=https://pub-41f5517642ad492cbae588b5671e80cb.r2.dev
+R2_PUBLIC_URL=https://your-public-domain.com
 
 # 确保 R2 上传已启用
 DISABLE_R2_UPLOAD=false
@@ -82,7 +82,7 @@ uv run python local_run.py \
 示例输出：
 ```json
 {
-  "output_url": "https://pub-41f5517642ad492cbae588b5671e80cb.r2.dev/songs/xxx.mp3",
+  "output_url": "https://your-public-domain.com/songs/xxx.mp3",
   "status": "success",
   "mode": "simple"
 }

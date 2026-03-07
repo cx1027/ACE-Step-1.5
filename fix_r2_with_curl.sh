@@ -4,9 +4,9 @@
 
 set -e
 
-# Extract account ID and API token from your working curl command
-ACCOUNT_ID="13d2f431296ab430eb63df236a1374e2"
-API_TOKEN="BEsxRu7zHmx-aO4RcMLAnXtlBmegId7MzfH9ElK6"
+# Extract account ID and API token from environment variables or use placeholders
+ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-your-cloudflare-account-id}"
+API_TOKEN="${CLOUDFLARE_API_TOKEN:-your-cloudflare-api-token-bearer-token}"
 TOKEN_NAME="ACE-Step-R2-Token"
 
 echo "=========================================="

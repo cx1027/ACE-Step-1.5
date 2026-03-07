@@ -58,6 +58,13 @@ uv.lock
 *.bat
 *.ps1
 
+# R2 setup scripts (not needed in production image, may contain sensitive info)
+fix_r2_*.sh
+update_r2_config.sh
+get_r2_credentials.py
+test_r2_*.sh
+test_r2_*.py
+
 # nano-vllm build artifacts (not used on Jetson)
 acestep/third_parts/nano-vllm/build/
 acestep/third_parts/nano-vllm/nano_vllm.egg-info/

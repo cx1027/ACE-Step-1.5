@@ -5,11 +5,11 @@
 set -e
 
 # Extract account ID and API token from curl command
-# Example: curl "https://api.cloudflare.com/client/v4/accounts/13d2f431296ab430eb63df236a1374e2/tokens/verify" \
-#          -H "Authorization: Bearer BEsxRu7zHmx-aO4RcMLAnXtlBmegId7MzfH9ElK6"
+# Example: curl "https://api.cloudflare.com/client/v4/accounts/your-account-id/tokens/verify" \
+#          -H "Authorization: Bearer your-cloudflare-api-token-bearer-token"
 
-ACCOUNT_ID="13d2f431296ab430eb63df236a1374e2"
-API_TOKEN="BEsxRu7zHmx-aO4RcMLAnXtlBmegId7MzfH9ElK6"
+ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-your-cloudflare-account-id}"
+API_TOKEN="${CLOUDFLARE_API_TOKEN:-your-cloudflare-api-token-bearer-token}"
 
 echo "Using Account ID: $ACCOUNT_ID"
 echo "Using API Token: ${API_TOKEN:0:20}..."
