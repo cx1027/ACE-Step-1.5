@@ -51,6 +51,10 @@ except ImportError:
     # dotenv is optional - continue without it if not installed
     pass
 
+# Set RunPod volume paths for HuggingFace cache and model storage
+os.environ["HF_HOME"] = "/runpod-volume/huggingface"
+os.environ["ACESTEP_MODEL_DIR"] = "/runpod-volume/models"
+
 
 def _get_project_root() -> str:
     """Get project root directory path.
@@ -393,13 +397,65 @@ async def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
                 },
             )
 
-            # Try REST API upload first (if available and configured)
+            # Determine which upload method to use
+            # Priority: S3-compatible API (Method 1) > REST API (Method 2)
+            # This allows users to use Method 1 exclusively by only configuring S3 credentials
+            s3_endpoint = os.environ.get("R2_ENDPOINT")
+            s3_access_key = os.environ.get("R2_ACCESS_KEY")
+            s3_secret_key = os.environ.get("R2_SECRET_KEY")
+            has_s3_config = s3_endpoint and s3_access_key and s3_secret_key
+
             account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
             api_token = os.environ.get("CLOUDFLARE_API_TOKEN")
-            use_rest_api = r2_upload_available and account_id and api_token
+            has_rest_api_config = r2_upload_available and account_id and api_token
 
-            if use_rest_api:
-                logger.info("Using Cloudflare REST API for R2 upload")
+            # Prefer S3-compatible API if configured (Method 1)
+            if has_s3_config:
+                logger.info("Using S3-compatible API for R2 upload (Method 1)")
+
+                def _blocking_upload_s3():
+                    import boto3
+                    from botocore.exceptions import ClientError
+
+                    s3 = boto3.client(
+                        "s3",
+                        endpoint_url=s3_endpoint,
+                        aws_access_key_id=s3_access_key,
+                        aws_secret_access_key=s3_secret_key,
+                        region_name="auto",
+                    )
+                    s3.upload_file(audio_path, bucket_name, object_key)
+                    return f"{public_url_prefix}/{object_key}" if public_url_prefix else f"https://{bucket_name}.r2.dev/{object_key}"
+
+                loop = asyncio.get_running_loop()
+                play_url = await loop.run_in_executor(_EXECUTOR, _blocking_upload_s3)
+
+                # Clean up local file
+                try:
+                    os.remove(audio_path)
+                except Exception as e:
+                    logger.warning(f"Failed to clean up local file {audio_path}: {e}")
+
+                await _send_progress_update(
+                    callback_url,
+                    {
+                        "job_id": job_id,
+                        "status": "success",
+                        "progress": 100,
+                        "output_url": play_url,
+                        "mode": mode,
+                    },
+                )
+
+                return {
+                    "output_url": play_url,
+                    "status": "success",
+                    "mode": mode,
+                }
+
+            # Fallback to REST API if S3-compatible not configured (Method 2)
+            elif has_rest_api_config:
+                logger.info("Using Cloudflare REST API for R2 upload (Method 2)")
                 # Run blocking upload operations in executor
                 def _blocking_upload_r2():
                     return upload_file_to_r2(
@@ -454,67 +510,16 @@ async def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
                         "mode": mode,
                     }
                 else:
-                    logger.warning("REST API upload failed, falling back to S3-compatible API")
+                    # REST API upload failed
+                    raise Exception("REST API upload failed")
 
-            # Fallback to S3-compatible API (boto3) if REST API not configured or failed
-            if not use_rest_api:
-                # Check if S3-compatible credentials are available
-                s3_endpoint = os.environ.get("R2_ENDPOINT")
-                s3_access_key = os.environ.get("R2_ACCESS_KEY")
-                s3_secret_key = os.environ.get("R2_SECRET_KEY")
-
-                if s3_endpoint and s3_access_key and s3_secret_key:
-                    logger.info("Using S3-compatible API for R2 upload")
-
-                    def _blocking_upload_s3():
-                        import boto3
-                        from botocore.exceptions import ClientError
-
-                        s3 = boto3.client(
-                            "s3",
-                            endpoint_url=s3_endpoint,
-                            aws_access_key_id=s3_access_key,
-                            aws_secret_access_key=s3_secret_key,
-                            region_name="auto",
-                        )
-                        s3.upload_file(audio_path, bucket_name, object_key)
-                        return f"{public_url_prefix}/{object_key}" if public_url_prefix else f"https://{bucket_name}.r2.dev/{object_key}"
-
-                    loop = asyncio.get_running_loop()
-                    play_url = await loop.run_in_executor(_EXECUTOR, _blocking_upload_s3)
-
-                    # Clean up local file
-                    try:
-                        os.remove(audio_path)
-                    except Exception as e:
-                        logger.warning(f"Failed to clean up local file {audio_path}: {e}")
-
-                    await _send_progress_update(
-                        callback_url,
-                        {
-                            "job_id": job_id,
-                            "status": "success",
-                            "progress": 100,
-                            "output_url": play_url,
-                            "mode": mode,
-                        },
-                    )
-
-                    return {
-                        "output_url": play_url,
-                        "status": "success",
-                        "mode": mode,
-                    }
-                else:
-                    # No valid R2 configuration found
-                    raise Exception(
-                        "No valid R2 configuration found. "
-                        "Either set CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN "
-                        "or R2_ENDPOINT + R2_ACCESS_KEY + R2_SECRET_KEY"
-                    )
             else:
-                # REST API upload failed
-                raise Exception("REST API upload failed and no fallback available")
+                # No valid R2 configuration found
+                raise Exception(
+                    "No valid R2 configuration found. "
+                    "Either set R2_ENDPOINT + R2_ACCESS_KEY + R2_SECRET_KEY (Method 1: S3-compatible) "
+                    "or CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN (Method 2: REST API)"
+                )
 
         except Exception as upload_error:
             # Check if it's an authentication/authorization error

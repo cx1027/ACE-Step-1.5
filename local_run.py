@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import uuid
@@ -25,20 +26,13 @@ from loguru import logger
 def _has_r2_config() -> bool:
     """Return True if all required Cloudflare R2 env vars are present.
 
-    Supports two authentication methods:
-    1. REST API: CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN
-    2. S3-Compatible: R2_ENDPOINT + R2_ACCESS_KEY + R2_SECRET_KEY
-    """
-    # Method 1: REST API (Bearer Token)
-    rest_api_keys = [
-        "CLOUDFLARE_ACCOUNT_ID",
-        "CLOUDFLARE_API_TOKEN",
-        "R2_BUCKET_NAME",
-        "R2_PUBLIC_URL",
-    ]
-    has_rest_api = all(os.environ.get(key) for key in rest_api_keys)
+    Supports two authentication methods (priority order):
+    1. S3-Compatible API (Method 1, preferred): R2_ENDPOINT + R2_ACCESS_KEY + R2_SECRET_KEY
+    2. REST API (Method 2, fallback): CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN
 
-    # Method 2: S3-Compatible API
+    Both methods also require: R2_BUCKET_NAME + R2_PUBLIC_URL
+    """
+    # Method 1: S3-Compatible API (preferred)
     s3_keys = [
         "R2_ENDPOINT",
         "R2_ACCESS_KEY",
@@ -48,7 +42,16 @@ def _has_r2_config() -> bool:
     ]
     has_s3_api = all(os.environ.get(key) for key in s3_keys)
 
-    return has_rest_api or has_s3_api
+    # Method 2: REST API (fallback)
+    rest_api_keys = [
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_API_TOKEN",
+        "R2_BUCKET_NAME",
+        "R2_PUBLIC_URL",
+    ]
+    has_rest_api = all(os.environ.get(key) for key in rest_api_keys)
+
+    return has_s3_api or has_rest_api
 
 
 def _configure_mps_high_watermark() -> None:
@@ -167,7 +170,7 @@ def main() -> None:
     # Import after .env load so handler init sees the environment variables.
     from runpod_handler import generate_music_job
 
-    result = generate_music_job(job)
+    result = asyncio.run(generate_music_job(job))
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

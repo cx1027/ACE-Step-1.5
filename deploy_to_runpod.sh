@@ -198,27 +198,34 @@ if [[ "$SKIP_BUILD" == false ]]; then
         exit 1
     fi
     
-    # 构建镜像
-    print_info "开始构建（这可能需要 15-30 分钟）..."
-    if docker build -t "$FULL_IMAGE_NAME" .; then
-        print_info "构建成功！"
-    else
-        print_error "构建失败"
+    # 检查并设置 buildx（用于跨平台构建）
+    print_info "检查 Docker buildx..."
+    if ! docker buildx version > /dev/null 2>&1; then
+        print_error "Docker buildx 不可用，请更新 Docker 或安装 buildx"
         exit 1
     fi
-else
-    print_info "跳过构建步骤"
-    FULL_IMAGE_NAME="${IMAGE_NAME}:${TAG}"
-fi
-
-# 步骤 3: 推送镜像
-if [[ "$SKIP_PUSH" == false ]]; then
-    print_info "步骤 3/3: 推送镜像到容器注册表..."
     
-    # 确定推送目标
-    if [[ "$REGISTRY" == "dockerhub" ]]; then
+    # 创建并使用 buildx builder（如果不存在）
+    BUILDER_NAME="acestep-builder"
+    if ! docker buildx inspect "$BUILDER_NAME" > /dev/null 2>&1; then
+        print_info "创建 buildx builder: $BUILDER_NAME"
+        docker buildx create --name "$BUILDER_NAME" --use || {
+            print_warn "创建 builder 失败，使用默认 builder"
+            BUILDER_NAME="default"
+        }
+    else
+        print_info "使用现有 buildx builder: $BUILDER_NAME"
+        docker buildx use "$BUILDER_NAME"
+    fi
+    
+    # 构建镜像（明确指定 linux/amd64 平台，因为 RunPod 需要 AMD64）
+    print_info "开始构建 linux/amd64 镜像（这可能需要 15-30 分钟）..."
+    print_info "注意：在 macOS 上构建 AMD64 镜像可能需要较长时间（使用 QEMU 模拟）"
+    
+    # 使用 buildx 构建并直接推送到 Docker Hub（如果提供了用户名）
+    if [[ "$REGISTRY" == "dockerhub" && -n "$USERNAME" && "$SKIP_PUSH" == false ]]; then
         PUSH_TARGET="${USERNAME}/${IMAGE_NAME}:${TAG}"
-        print_info "目标: Docker Hub - $PUSH_TARGET"
+        print_info "构建并推送镜像到: $PUSH_TARGET"
         
         # 检查是否已登录
         if ! docker info | grep -q "Username"; then
@@ -237,31 +244,94 @@ if [[ "$SKIP_PUSH" == false ]]; then
             fi
         fi
         
-        # 标记镜像
-        print_info "标记镜像..."
-        docker tag "$FULL_IMAGE_NAME" "$PUSH_TARGET" || {
-            print_error "标记失败"
-            exit 1
-        }
-        
-        # 推送镜像
-        print_info "推送镜像（这可能需要 10-30 分钟）..."
-        if docker push "$PUSH_TARGET"; then
-            print_info "推送成功！"
+        # 使用 buildx 构建并推送（一步完成）
+        if docker buildx build \
+            --platform linux/amd64 \
+            --tag "$PUSH_TARGET" \
+            --push \
+            .; then
+            print_info "构建并推送成功！"
             print_info "镜像地址: docker.io/$PUSH_TARGET"
         else
-            print_error "推送失败"
+            print_error "构建或推送失败"
             exit 1
         fi
-        
-    elif [[ "$REGISTRY" == "runpod" ]]; then
-        print_warn "RunPod Registry 需要手动配置"
-        print_info "请参考 DEPLOY_TO_RUNPOD.md 中的说明"
-        print_info "本地镜像: $FULL_IMAGE_NAME"
-        exit 0
     else
-        print_error "不支持的注册表: $REGISTRY"
-        exit 1
+        # 仅构建镜像（不推送）
+        if docker buildx build \
+            --platform linux/amd64 \
+            --tag "$FULL_IMAGE_NAME" \
+            --load \
+            .; then
+            print_info "构建成功！"
+            print_info "注意：使用 --load 在 macOS 上可能失败（buildx 不支持跨平台 --load）"
+            print_info "建议：使用 --push 直接推送到注册表，或使用 Linux 机器构建"
+        else
+            print_error "构建失败"
+            print_info "提示：在 macOS 上构建 AMD64 镜像时，建议使用 --push 直接推送，而不是 --load"
+            exit 1
+        fi
+    fi
+else
+    print_info "跳过构建步骤"
+    FULL_IMAGE_NAME="${IMAGE_NAME}:${TAG}"
+fi
+
+# 步骤 3: 推送镜像（如果构建时未推送）
+if [[ "$SKIP_PUSH" == false ]]; then
+    # 检查是否已经在构建时推送了
+    if [[ "$REGISTRY" == "dockerhub" && -n "$USERNAME" && "$SKIP_BUILD" == false ]]; then
+        # 已经在构建时推送了，跳过
+        print_info "镜像已在构建时推送到 Docker Hub，跳过推送步骤"
+        PUSH_TARGET="${USERNAME}/${IMAGE_NAME}:${TAG}"
+    else
+        print_info "步骤 3/3: 推送镜像到容器注册表..."
+        
+        # 确定推送目标
+        if [[ "$REGISTRY" == "dockerhub" ]]; then
+            PUSH_TARGET="${USERNAME}/${IMAGE_NAME}:${TAG}"
+            print_info "目标: Docker Hub - $PUSH_TARGET"
+            
+            # 检查是否已登录
+            if ! docker info | grep -q "Username"; then
+                print_warn "未检测到 Docker Hub 登录状态"
+                print_info "请先运行: docker login"
+                read -p "是否现在登录？(y/n) " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    docker login || {
+                        print_error "登录失败"
+                        exit 1
+                    }
+                else
+                    print_error "需要登录才能推送"
+                    exit 1
+                fi
+            fi
+            
+            # 使用 buildx 构建并推送（如果本地镜像不存在或需要重新构建）
+            print_info "使用 buildx 构建并推送 linux/amd64 镜像..."
+            if docker buildx build \
+                --platform linux/amd64 \
+                --tag "$PUSH_TARGET" \
+                --push \
+                .; then
+                print_info "推送成功！"
+                print_info "镜像地址: docker.io/$PUSH_TARGET"
+            else
+                print_error "推送失败"
+                exit 1
+            fi
+            
+        elif [[ "$REGISTRY" == "runpod" ]]; then
+            print_warn "RunPod Registry 需要手动配置"
+            print_info "请参考 DEPLOY_TO_RUNPOD.md 中的说明"
+            print_info "本地镜像: $FULL_IMAGE_NAME"
+            exit 0
+        else
+            print_error "不支持的注册表: $REGISTRY"
+            exit 1
+        fi
     fi
 else
     print_info "跳过推送步骤"

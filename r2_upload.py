@@ -17,13 +17,13 @@ def verify_cloudflare_token(account_id: str, api_token: str) -> bool:
     """Verify Cloudflare API token is valid.
 
     Args:
-        account_id: Cloudflare Account ID.
+        account_id: Cloudflare Account ID (not used for verification, kept for compatibility).
         api_token: Cloudflare API Token (Bearer token).
 
     Returns:
         True if token is valid, False otherwise.
     """
-    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/tokens/verify"
+    url = "https://api.cloudflare.com/client/v4/user/tokens/verify"
     headers = {"Authorization": f"Bearer {api_token}"}
 
     try:

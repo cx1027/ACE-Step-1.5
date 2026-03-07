@@ -293,10 +293,30 @@ R2_PUBLIC_URL = https://your-public-domain.com
 
 #### 常见问题排查
 
-**问题 1: 镜像拉取失败**
+**问题 1: 镜像拉取失败 - "no matching manifest for linux/amd64"**
+
+这是最常见的错误，通常发生在 macOS (ARM64) 上构建镜像时。
+
+**原因**: 在 macOS 上使用 `docker build` 会默认构建 ARM64 镜像，但 RunPod 需要 AMD64 镜像。
+
+**解决方案**:
+1. 使用 `docker buildx` 明确指定平台：
+   ```bash
+   docker buildx build --platform linux/amd64 -t your-username/acestep-runpod:latest --push .
+   ```
+
+2. 或使用部署脚本（已自动处理）：
+   ```bash
+   ./deploy_to_runpod.sh --username your-username --tag latest
+   ```
+
+3. **重要**: 重新 pull 镜像不会解决这个问题，必须重新构建并推送正确的平台镜像。
+
+**问题 2: 镜像拉取失败（其他原因）**
 - 检查镜像名称是否正确
 - 确认镜像已成功推送到 Docker Hub
 - 检查 Docker Hub 镜像是否为公开（或已配置凭据）
+- 确认镜像包含 `linux/amd64` 平台（使用 `docker manifest inspect your-username/acestep-runpod:latest` 检查）
 
 **问题 2: Handler 找不到**
 - 确认 Handler Path 设置为 `runpod_handler.py`
@@ -335,19 +355,35 @@ python-dotenv
 
 ### 4. Build Docker Image
 
-A `Dockerfile` is provided for building the container image:
+A `Dockerfile` is provided for building the container image.
+
+**⚠️ IMPORTANT: Platform Architecture**
+
+RunPod requires **linux/amd64** images. If you're building on macOS (ARM64) or other non-AMD64 platforms, you **must** use `docker buildx` with `--platform linux/amd64`:
 
 ```bash
-# Build the image
-docker build -t acestep-runpod .
+# For RunPod deployment (REQUIRED: specify linux/amd64 platform)
+docker buildx build --platform linux/amd64 -t acestep-runpod:latest --push .
 
-# Or if you want to include .env file (for development/testing):
-# 1. First, create .env from the example:
-cp runpod.env.example .env
-# 2. Edit .env with your values
-# 3. Uncomment the COPY .env line in Dockerfile
-# 4. Build:
-docker build -t acestep-runpod .
+# Or use the deployment script (recommended):
+./deploy_to_runpod.sh --username your-dockerhub-username --tag latest
+```
+
+**If you build without specifying platform on macOS**, the image will be ARM64 and RunPod will fail with:
+```
+failed to pull image: no matching manifest for linux/amd64 in the manifest list entries
+```
+
+**Manual build (if not using the script):**
+
+```bash
+# Build and push directly (recommended for macOS)
+docker buildx build --platform linux/amd64 -t your-username/acestep-runpod:latest --push .
+
+# Or build locally first (may not work on macOS due to --load limitation)
+docker buildx build --platform linux/amd64 -t acestep-runpod:latest --load .
+docker tag acestep-runpod:latest your-username/acestep-runpod:latest
+docker push your-username/acestep-runpod:latest
 ```
 
 **Note**: Including `.env` in the Docker image embeds secrets. For production, use RunPod's environment variable settings (Method 1) instead.

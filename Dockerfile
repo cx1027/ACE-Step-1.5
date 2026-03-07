@@ -104,8 +104,10 @@ RUN pip install --no-cache-dir \
 # ==================== Project source ====================
 WORKDIR /app
 
-# Copy project files
-COPY . /app/
+# Copy dependency files first (for better layer caching)
+# This allows dependency installation layers to be cached when only code changes
+COPY pyproject.toml /app/
+COPY acestep/third_parts/nano-vllm /app/acestep/third_parts/nano-vllm/
 
 # Install nano-vllm from local source first (before installing project)
 # This is needed because pip cannot resolve tool.uv.sources in pyproject.toml
@@ -113,6 +115,10 @@ RUN if [ -d "acestep/third_parts/nano-vllm" ]; then \
         pip install --no-cache-dir --no-deps acestep/third_parts/nano-vllm || \
         echo "WARNING: nano-vllm install failed (non-fatal)"; \
     fi
+
+# Copy the rest of the project files
+# This layer will be invalidated when code changes, but dependency layers above stay cached
+COPY . /app/
 
 # Install ACE-Step package in editable mode
 # This ensures acestep module can be imported by runpod_handler.py
