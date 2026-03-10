@@ -165,6 +165,8 @@ API 支持大多数参数的 **snake_case** 和 **camelCase** 命名。例如：
   - 服务器将使用 5Hz LM 生成 `audio_code_string`（lm-dit 行为）。
   - DiT 使用 LM 生成的代码运行，以增强音乐质量。
 
+**注意**：`audio_code_string` 是**音频语义令牌**（文本格式的中间表示），**不是**音频文件（如 .mp3）。最终输出的音频文件格式由 `audio_format` 参数控制（默认 mp3），所有 mode（simple/custom/standard）都可以生成 .mp3 或其他格式的音频文件。
+
 **元数据自动补全（条件性）**：
 
 当 `use_cot_caption=true` 或 `use_cot_language=true` 或元数据字段缺失时，服务器可能会调用 5Hz LM 根据 `caption`/`lyrics` 填充缺失的字段：
@@ -189,7 +191,26 @@ API 支持大多数参数的 **snake_case** 和 **camelCase** 命名。例如：
 
 | 参数名 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `audio_code_string` | string 或 string[] | `""` | 用于 `llm_dit` 的音频语义令牌（5Hz）。别名：`audioCodeString` |
+| `audio_code_string` | string 或 string[] | `""` | 用于 `llm_dit` 的音频语义令牌（5Hz，文本格式的中间表示，**不是**音频文件）。别名：`audioCodeString` |
+
+**`audio_code_string` 对最终结果的影响**：
+
+`audio_code_string` 通过以下流程影响最终生成的音频：
+
+1. **解码过程**：`audio_code_string` 中的令牌（如 `<|audio_code_123|>`）被解析为整数代码序列，然后通过 DiT 模型的 quantizer 和 detokenizer 转换为 **25Hz 的潜在表示（latents）**。
+
+2. **条件注入**：这些 latents 作为 `precomputed_lm_hints_25Hz` 传递给 DiT 模型的 `prepare_condition` 方法，成为扩散过程的**条件信息**。
+
+3. **对生成的影响**：
+   - **结构指导**：`audio_code_string` 提供了音乐的**高层语义结构**（如旋律轮廓、节奏模式、和声进行），帮助 DiT 模型生成更符合预期的音乐结构。
+   - **质量提升**：当 `thinking=true` 时，5Hz LM 生成的 `audio_code_string` 能够**增强音乐质量**，使生成结果更加连贯和音乐性更强。
+   - **内容控制**：不同的 `audio_code_string` 会引导 DiT 生成**不同风格和内容**的音频，相当于为扩散过程提供了"音乐蓝图"。
+
+4. **与 text2music 的区别**：
+   - **无 `audio_code_string`**（`thinking=false`）：DiT 仅基于文本描述（caption/lyrics）和元数据生成，属于纯 text2music 模式。
+   - **有 `audio_code_string`**（`thinking=true`）：DiT 同时使用文本描述和音频语义令牌，属于 lm-dit 模式，通常能产生**更高质量和更可控**的音乐生成结果。
+
+**注意**：`audio_code_string` 本身不是音频文件，而是指导音频生成的中间表示。最终输出的音频文件格式由 `audio_format` 参数控制（默认 mp3）。
 
 **生成控制参数**：
 

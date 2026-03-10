@@ -34,8 +34,9 @@ else:
     r2_upload_available = True
 
 from acestep.handler import AceStepHandler
-from acestep.inference import GenerationConfig, GenerationParams, generate_music
+from acestep.inference import GenerationConfig, GenerationParams, generate_music, create_sample
 from acestep.llm_inference import LLMHandler
+from acestep.api.server_utils import parse_description_hints
 from loguru import logger
 
 # Try to load .env file if available (optional dependency)
@@ -230,37 +231,128 @@ async def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
         callback_url = job_input.get("callback_url")
 
         # ------------------------------------------------------------------
-        # Mode selection (optional): simple vs custom
+        # Mode selection: simple, custom, or sample_query
         # ------------------------------------------------------------------
-        # If `mode` is not provided, behave like the oficial acestep-api:
+        # 1. Simple Mode (mode="simple"): Force instrumental, ignore user lyrics
+        # 2. Custom Mode (mode="custom"): Require explicit lyrics
+        # 3. sample_query Mode: Use LLM to generate metadata from natural language query
+        #
+        # If `mode` is not provided and no `sample_query`, behave like acestep-api:
         # - `prompt`/`caption` describe the music
         # - `lyrics` is fully optional (empty or "[Instrumental]" both ok)
-        #
-        # If `mode` is provided:
-        # - "simple": ignore any user-provided lyrics and force instrumental
-        # - "custom": require explicit lyrics
         mode = job_input.get("mode")
-        prompt = job_input.get("prompt") or job_input.get("caption") or "a beautiful melody"
-        caption = job_input.get("caption", prompt)
-        duration = job_input.get("duration", 30)
+        sample_query = job_input.get("sample_query") or job_input.get("sampleQuery") or ""
+        has_sample_query = bool(sample_query and sample_query.strip())
 
-        if mode is None:
-            # Default behavior: lyrics is optional, compatible with acestep-api
-            lyrics = job_input.get("lyrics", "[Instrumental]")
-        elif mode == "simple":
-            lyrics = "[Instrumental]"
-        elif mode == "custom":
-            lyrics = job_input.get("lyrics")
-            if not lyrics:
+        # Check if sample_query mode is requested
+        if has_sample_query:
+            # sample_query mode: Use LLM to generate complete metadata
+            if _LLM_HANDLER is None or not _LLM_HANDLER.llm_initialized:
                 return {
                     "status": "error",
-                    "error": "Custom mode requires 'lyrics' in job input.",
+                    "error": "sample_query mode requires LLM handler, but it's not initialized.",
                 }
+
+            # Parse language and instrumental hints from query
+            parsed_language, parsed_instrumental = parse_description_hints(sample_query)
+
+            # Use explicit vocal_language if provided, otherwise use parsed
+            vocal_language = job_input.get("vocal_language") or job_input.get("vocalLanguage")
+            if vocal_language and vocal_language not in ("en", "unknown", ""):
+                sample_language = vocal_language
+            else:
+                sample_language = parsed_language
+
+            # Get LM parameters
+            lm_temperature = job_input.get("lm_temperature") or job_input.get("lmTemperature", 0.85)
+            lm_top_p = job_input.get("lm_top_p") or job_input.get("lmTopP")
+            lm_top_k = job_input.get("lm_top_k") or job_input.get("lmTopK")
+            lm_top_p = lm_top_p if lm_top_p is not None and lm_top_p < 1.0 else None
+            lm_top_k = lm_top_k if lm_top_k is not None and lm_top_k > 0 else None
+
+            logger.info(f"Creating sample from query: '{sample_query}' (instrumental={parsed_instrumental}, language={sample_language})")
+
+            # Call create_sample in executor (blocking operation)
+            def _blocking_create_sample():
+                return create_sample(
+                    llm_handler=_LLM_HANDLER,
+                    query=sample_query,
+                    instrumental=parsed_instrumental,
+                    vocal_language=sample_language,
+                    temperature=lm_temperature,
+                    top_k=lm_top_k,
+                    top_p=lm_top_p,
+                    use_constrained_decoding=True,
+                )
+
+            loop = asyncio.get_running_loop()
+            sample_result = await loop.run_in_executor(_EXECUTOR, _blocking_create_sample)
+
+            if not sample_result.success:
+                error_msg = sample_result.error or sample_result.status_message or "Failed to create sample from query"
+                await _send_progress_update(
+                    callback_url,
+                    {
+                        "job_id": job_id,
+                        "status": "error",
+                        "progress": 100,
+                        "error": error_msg,
+                    },
+                )
+                return {
+                    "status": "error",
+                    "error": error_msg,
+                }
+
+            # Use generated metadata from sample_result
+            caption = sample_result.caption
+            lyrics = sample_result.lyrics
+            bpm = sample_result.bpm
+            keyscale = sample_result.keyscale
+            time_signature = sample_result.timesignature
+            # Prefer user-provided duration, fallback to sample_result, then default
+            duration = job_input.get("duration") or job_input.get("audio_duration") or job_input.get("audioDuration")
+            if duration is None:
+                duration = sample_result.duration if sample_result.duration else 30
+            vocal_language = sample_result.language or vocal_language or "en"
+
+            logger.info(
+                f"Sample created: caption='{caption[:50]}...', "
+                f"bpm={bpm}, duration={duration}, keyscale={keyscale}, "
+                f"language={vocal_language}"
+            )
+
         else:
-            return {
-                "status": "error",
-                "error": f"Invalid mode: {mode}. Use 'simple' or 'custom'.",
-            }
+            # Standard mode: Use provided parameters or defaults
+            prompt = job_input.get("prompt") or job_input.get("caption") or "a beautiful melody"
+            caption = job_input.get("caption", prompt)
+            duration = job_input.get("duration") or job_input.get("audio_duration") or job_input.get("audioDuration", 30)
+
+            if mode is None:
+                # Default behavior: lyrics is optional, compatible with acestep-api
+                lyrics = job_input.get("lyrics", "[Instrumental]")
+            elif mode == "simple":
+                # Simple mode: Force instrumental
+                lyrics = "[Instrumental]"
+            elif mode == "custom":
+                # Custom mode: Require explicit lyrics
+                lyrics = job_input.get("lyrics")
+                if not lyrics:
+                    return {
+                        "status": "error",
+                        "error": "Custom mode requires 'lyrics' in job input.",
+                    }
+            else:
+                return {
+                    "status": "error",
+                    "error": f"Invalid mode: {mode}. Use 'simple' or 'custom'.",
+                }
+
+            # Use provided metadata or defaults
+            bpm = job_input.get("bpm")
+            keyscale = job_input.get("key") or job_input.get("key_scale") or job_input.get("keyscale") or ""
+            time_signature = job_input.get("time_signature") or job_input.get("timesignature") or ""
+            vocal_language = job_input.get("vocal_language") or job_input.get("vocalLanguage") or "en"
 
         # Create temporary output directory
         output_dir = "/tmp/acestep_output"
@@ -272,35 +364,53 @@ async def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
             caption=caption,
             lyrics=lyrics,
             duration=float(duration),
-            bpm=job_input.get("bpm"),
-            keyscale=job_input.get("key", ""),
+            bpm=bpm,
+            keyscale=keyscale,
+            timesignature=time_signature,
+            vocal_language=vocal_language,
             inference_steps=job_input.get("inference_steps", 8),
             guidance_scale=job_input.get("guidance_scale", 7.0),
             seed=job_input.get("seed", -1),
             thinking=job_input.get("thinking", True),
-            use_cot_metas=job_input.get("use_cot_metas", True),
-            use_cot_caption=job_input.get("use_cot_caption", True),
-            use_cot_language=job_input.get("use_cot_language", True),
+            use_cot_metas=job_input.get("use_cot_metas", True) if not has_sample_query else False,
+            use_cot_caption=job_input.get("use_cot_caption", True) if not has_sample_query else False,
+            use_cot_language=job_input.get("use_cot_language", True) if not has_sample_query else False,
+            lm_temperature=job_input.get("lm_temperature") or job_input.get("lmTemperature"),
+            lm_cfg_scale=job_input.get("lm_cfg_scale") or job_input.get("lmCfgScale"),
+            lm_top_k=job_input.get("lm_top_k") or job_input.get("lmTopK"),
+            lm_top_p=job_input.get("lm_top_p") or job_input.get("lmTopP"),
         )
 
+        # Get audio format (support both snake_case and camelCase)
+        audio_format = job_input.get("audio_format") or job_input.get("audioFormat", "mp3")
+        
+        # Get batch size
+        batch_size = job_input.get("batch_size") or job_input.get("batchSize", 1)
+        
         config = GenerationConfig(
-            batch_size=1,
+            batch_size=batch_size,
             use_random_seed=job_input.get("seed", -1) < 0,
             seeds=[job_input.get("seed")] if job_input.get("seed", -1) >= 0 else None,
-            audio_format="mp3",  # Use MP3 for smaller file size
+            audio_format=audio_format,
         )
 
         # Generate music
-        logger.info(
-            f"Generating music (mode={mode}): prompt='{prompt}', duration={duration}s",
-        )
+        if has_sample_query:
+            logger.info(
+                f"Generating music (sample_query mode): query='{sample_query}', "
+                f"caption='{caption[:50]}...', duration={duration}s"
+            )
+        else:
+            logger.info(
+                f"Generating music (mode={mode}): prompt='{caption}', duration={duration}s",
+            )
         await _send_progress_update(
             callback_url,
             {
                 "job_id": job_id,
                 "status": "generating",
                 "progress": 10,
-                "mode": mode,
+                "mode": "sample_query" if has_sample_query else mode,
             },
         )
 
@@ -371,13 +481,13 @@ async def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
                     "status": "success",
                     "progress": 100,
                     "output_url": audio_path,
-                    "mode": mode,
+                    "mode": "sample_query" if has_sample_query else mode,
                 },
             )
             return {
                 "output_url": audio_path,
                 "status": "success",
-                "mode": mode,
+                "mode": "sample_query" if has_sample_query else mode,
             }
 
         # Upload to Cloudflare R2
@@ -443,14 +553,14 @@ async def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
                         "status": "success",
                         "progress": 100,
                         "output_url": play_url,
-                        "mode": mode,
+                        "mode": "sample_query" if has_sample_query else mode,
                     },
                 )
 
                 return {
                     "output_url": play_url,
                     "status": "success",
-                    "mode": mode,
+                    "mode": "sample_query" if has_sample_query else mode,
                 }
 
             # Fallback to REST API if S3-compatible not configured (Method 2)
@@ -496,18 +606,18 @@ async def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
                     await _send_progress_update(
                         callback_url,
                         {
-                            "job_id": job_id,
-                            "status": "success",
-                            "progress": 100,
-                            "output_url": play_url,
-                            "mode": mode,
-                        },
-                    )
+                        "job_id": job_id,
+                        "status": "success",
+                        "progress": 100,
+                        "output_url": play_url,
+                        "mode": "sample_query" if has_sample_query else mode,
+                    },
+                )
 
                     return {
                         "output_url": play_url,
                         "status": "success",
-                        "mode": mode,
+                        "mode": "sample_query" if has_sample_query else mode,
                     }
                 else:
                     # REST API upload failed
@@ -560,13 +670,13 @@ async def generate_music_job(job: Dict[str, Any]) -> Dict[str, Any]:
                         "status": "success",
                         "progress": 100,
                         "output_url": audio_path,
-                        "mode": mode,
+                        "mode": "sample_query" if has_sample_query else mode,
                     },
                 )
                 return {
                     "output_url": audio_path,
                     "status": "success",
-                    "mode": mode,
+                    "mode": "sample_query" if has_sample_query else mode,
                 }
             else:
                 # Re-raise other upload errors
