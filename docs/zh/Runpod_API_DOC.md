@@ -2,6 +2,8 @@
 
 本文档说明 `runpod_handler.py` 在 **Simple Mode**、**Custom Mode**、**sample_query 模式** 下的请求 JSON 格式（RunPod Job 的 `input` 字段）。
 
+如果你只想快速复制粘贴示例，请看：[`RunPod_JSON_Inputs.md`](RunPod_JSON_Inputs.md)。
+
 所有示例均假设 RunPod 标准请求外层结构如下：
 
 ```json
